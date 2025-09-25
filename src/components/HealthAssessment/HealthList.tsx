@@ -1,14 +1,5 @@
 import React from 'react';
-import { 
-  CheckCircle, 
-  AlertTriangle, 
-  AlertCircle, 
-  ChevronDown, 
-  ChevronRight,
-  MapPin,
-  Clock,
-  TrendingUp
-} from 'lucide-react';
+import { CircleCheck as CheckCircle, TriangleAlert as AlertTriangle, CircleAlert as AlertCircle, ChevronDown, ChevronRight, MapPin, Clock, TrendingUp } from 'lucide-react';
 import { HealthAssessment } from '../../types';
 import { cn } from '../../utils/cn';
 

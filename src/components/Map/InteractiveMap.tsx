@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { HealthAssessment, FieldBoundary } from '../../types';
-import { AlertTriangle, CheckCircle, AlertCircle, MapPin } from 'lucide-react';
+import { TriangleAlert as AlertTriangle, CircleCheck as CheckCircle, CircleAlert as AlertCircle, MapPin } from 'lucide-react';
 
 // Fix for default markers in react-leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;

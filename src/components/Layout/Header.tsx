@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sprout, Map, BarChart3, Settings, Menu } from 'lucide-react';
+import { Sprout, Map, ChartBar as BarChart3, Settings, Menu } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 interface HeaderProps {
