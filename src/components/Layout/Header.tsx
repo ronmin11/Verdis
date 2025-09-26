@@ -32,7 +32,7 @@ const Header: React.FC<HeaderProps> = ({
               <Sprout className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">CropHealth Pro</h1>
+              <h1 className="text-xl font-bold text-gray-900">Verdis</h1>
               <p className="text-xs text-gray-500">Precision Agriculture Platform</p>
             </div>
           </div>
