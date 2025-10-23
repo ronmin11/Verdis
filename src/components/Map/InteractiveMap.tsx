@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { HealthAssessment, FieldBoundary } from '../../types';
 import { TriangleAlert as AlertTriangle, CircleCheck as CheckCircle, CircleAlert as AlertCircle, MapPin } from 'lucide-react';
 
@@ -78,6 +79,17 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({
   const mapRef = useRef<L.Map>(null);
   const [mapCenter] = useState<[number, number]>([40.7128, -74.0060]);
   const [mapZoom] = useState(15);
+  const [mapReady, setMapReady] = useState(false);
+
+  // Handle map ready state
+  const handleMapReady = useCallback(() => {
+    if (mapRef.current) {
+      setTimeout(() => {
+        mapRef.current?.invalidateSize();
+        setMapReady(true);
+      }, 100);
+    }
+  }, []);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -105,12 +117,23 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({
     }
   };
 
+  // Set the map container to take full width/height of its parent
+  const containerStyle = {
+    width: '100%',
+    height: '100%',
+    minHeight: '500px',
+    borderRadius: '0.5rem',
+    overflow: 'hidden',
+    zIndex: 0
+  };
+
   return (
-    <div className={`relative ${className}`}>
+    <div className={`relative ${className}`} style={{ height: '500px', width: '100%' }}>
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
-        className="w-full h-full rounded-lg"
+        style={{ height: '100%', width: '100%' }}
+        whenReady={handleMapReady}
         ref={mapRef}
       >
         <TileLayer

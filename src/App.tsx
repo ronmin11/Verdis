@@ -1,171 +1,132 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { MessageSquare } from 'lucide-react';
+
+// Layout Components
 import Header from './components/Layout/Header';
+
+// Page Components
+import LandingPage from './pages/LandingPage';
 import InteractiveMap from './components/Map/InteractiveMap';
-import LayerControls from './components/Map/LayerControls';
-import WeatherWidget from './components/Weather/WeatherWidget';
-import WeatherChart from './components/Weather/WeatherChart';
-import HealthList from './components/HealthAssessment/HealthList';
+
+// Mock Data
 import { 
-  mockWeatherData, 
-  mockHealthAssessments, 
-  mockMapLayers, 
-  mockFieldBoundaries 
+  mockFieldBoundaries,
+  mockHealthAssessments
 } from './data/mockData';
-import { HealthAssessment, MapLayer } from './types';
 
-function App() {
-  const [activeView, setActiveView] = useState('map');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [selectedAssessment, setSelectedAssessment] = useState<HealthAssessment>();
-  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [mapLayers, setMapLayers] = useState<MapLayer[]>(mockMapLayers);
-  const [selectedLocation, setSelectedLocation] = useState<{lat: number, lng: number}>();
+// View Components
+const DashboardView: React.FC = () => (
+  <div className="space-y-6">
+    <h2 className="text-2xl font-bold">Dashboard</h2>
+    <p>Welcome to your dashboard. Select an option from the menu to get started.</p>
+  </div>
+);
 
-  const handleViewChange = (view: string) => {
-    setActiveView(view);
-    setIsMobileMenuOpen(false);
-  };
+const DroneSurveyView: React.FC = () => (
+  <div className="space-y-6">
+    <h2 className="text-2xl font-bold">Drone Survey</h2>
+    <p>Upload and analyze drone survey data here.</p>
+  </div>
+);
 
-  const handleMenuToggle = () => {
-    setIsMobileMenuOpen(!isMobileMenuOpen);
-  };
+const SingleImageView: React.FC = () => (
+  <div className="space-y-6">
+    <h2 className="text-2xl font-bold">Single Image Upload</h2>
+    <p>Upload a single image for analysis.</p>
+  </div>
+);
 
-  const handleAssessmentSelect = (assessment: HealthAssessment) => {
-    setSelectedAssessment(assessment);
-  };
+const MapView: React.FC = () => (
+  <div className="h-[600px] bg-gray-100 rounded-lg">
+    <InteractiveMap 
+      healthAssessments={mockHealthAssessments}
+      fieldBoundaries={mockFieldBoundaries}
+      onLocationSelect={() => {}}
+      onAssessmentSelect={() => {}}
+    />
+  </div>
+);
 
-  const handleLocationSelect = (lat: number, lng: number) => {
-    setSelectedLocation({ lat, lng });
-    console.log('Selected location:', { lat, lng });
-  };
+const ReportsView: React.FC = () => (
+  <div className="space-y-6">
+    <h2 className="text-2xl font-bold">Reports</h2>
+    <p>View and generate reports here.</p>
+  </div>
+);
 
-  const handleToggleExpanded = (id: string) => {
-    const newExpanded = new Set(expandedItems);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
-    }
-    setExpandedItems(newExpanded);
-  };
+const SettingsView: React.FC = () => (
+  <div className="space-y-6">
+    <h2 className="text-2xl font-bold">Settings</h2>
+    <p>Configure your application settings.</p>
+  </div>
+);
 
-  const handleLayerToggle = (layerId: string) => {
-    setMapLayers(layers => 
-      layers.map(layer => 
-        layer.id === layerId 
-          ? { ...layer, visible: !layer.visible }
-          : layer
-      )
-    );
-  };
-
-  const handleOpacityChange = (layerId: string, opacity: number) => {
-    setMapLayers(layers => 
-      layers.map(layer => 
-        layer.id === layerId 
-          ? { ...layer, opacity }
-          : layer
-      )
-    );
-  };
-
-  if (activeView !== 'map') {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <Header 
-          activeView={activeView}
-          onViewChange={handleViewChange}
-          onMenuToggle={handleMenuToggle}
-          isMobileMenuOpen={isMobileMenuOpen}
-        />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center py-12">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              {activeView === 'dashboard' && 'Dashboard'}
-              {activeView === 'reports' && 'Reports'}
-              {activeView === 'settings' && 'Settings'}
-            </h2>
-            <p className="text-gray-600">
-              This section is under development. Please use the Map View to explore the crop health assessment features.
-            </p>
-          </div>
-        </main>
-      </div>
-    );
-  }
+// Wrapper component for the app layout with header and main content
+const AppLayoutWrapper: React.FC = () => {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+  const [showChatbot, setShowChatbot] = React.useState(false);
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Header 
-        activeView={activeView}
-        onViewChange={handleViewChange}
-        onMenuToggle={handleMenuToggle}
+        onMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         isMobileMenuOpen={isMobileMenuOpen}
       />
       
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-140px)]">
-          {/* Left Sidebar - Controls and Weather */}
-          <div className="lg:col-span-1 space-y-6 overflow-y-auto custom-scrollbar">
-            <LayerControls
-              layers={mapLayers}
-              onLayerToggle={handleLayerToggle}
-              onOpacityChange={handleOpacityChange}
-            />
-            
-            <WeatherWidget weatherData={mockWeatherData} />
-            
-            <div className="hidden xl:block">
-              <WeatherChart weatherData={mockWeatherData} />
-            </div>
-          </div>
-
-          {/* Center - Map */}
-          <div className="lg:col-span-2">
-            <div className="card p-0 h-full overflow-hidden">
-              <InteractiveMap
-                healthAssessments={mockHealthAssessments}
-                fieldBoundaries={mockFieldBoundaries}
-                onLocationSelect={handleLocationSelect}
-                onAssessmentSelect={handleAssessmentSelect}
-                selectedAssessment={selectedAssessment}
-                className="h-full"
-              />
-            </div>
-          </div>
-
-          {/* Right Sidebar - Health Assessments */}
-          <div className="lg:col-span-1">
-            <HealthList
-              assessments={mockHealthAssessments}
-              onAssessmentSelect={handleAssessmentSelect}
-              selectedAssessment={selectedAssessment}
-              expandedItems={expandedItems}
-              onToggleExpanded={handleToggleExpanded}
-              className="h-full"
-            />
-          </div>
-        </div>
-
-        {/* Mobile Weather Chart */}
-        <div className="xl:hidden mt-6">
-          <WeatherChart weatherData={mockWeatherData} />
-        </div>
-
-        {/* Selected Location Display */}
-        {selectedLocation && (
-          <div className="fixed bottom-4 left-4 bg-white rounded-lg shadow-soft p-3 border border-gray-200">
-            <div className="text-sm">
-              <div className="font-medium text-gray-900">Selected Location</div>
-              <div className="text-gray-600">
-                Lat: {selectedLocation.lat.toFixed(6)}, Lng: {selectedLocation.lng.toFixed(6)}
-              </div>
-            </div>
-          </div>
-        )}
+      <main className="container mx-auto px-4 py-6">
+        <Routes>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<DashboardView />} />
+          <Route path="drone" element={<DroneSurveyView />} />
+          <Route path="single" element={<SingleImageView />} />
+          <Route path="map" element={<MapView />} />
+          <Route path="reports" element={<ReportsView />} />
+          <Route path="settings" element={<SettingsView />} />
+        </Routes>
       </main>
+
+      {/* Chatbot Button */}
+      <button
+        onClick={() => setShowChatbot(!showChatbot)}
+        className="fixed bottom-6 right-6 bg-primary-600 text-white p-4 rounded-full shadow-lg hover:bg-primary-700 transition-colors z-40"
+        aria-label="Toggle chatbot"
+      >
+        <MessageSquare className="h-6 w-6" />
+      </button>
+
+      {/* Chatbot Panel */}
+      {showChatbot && (
+        <div className="fixed bottom-20 right-6 w-80 bg-white rounded-lg shadow-xl z-50 overflow-hidden">
+          <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+            <h3 className="font-semibold">AI Assistant</h3>
+            <button 
+              onClick={() => setShowChatbot(false)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-4 h-80 overflow-y-auto">
+            <p className="text-sm text-gray-600">Chat functionality coming soon!</p>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+};
+
+// Main App Component with Routing
+const App: React.FC = () => {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/app/*" element={<AppLayoutWrapper />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Router>
+  );
+};
 
 export default App;

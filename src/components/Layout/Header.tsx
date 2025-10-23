@@ -1,25 +1,28 @@
 import React from 'react';
-import { Sprout, Map, ChartBar as BarChart3, Settings, Menu } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Sprout, Map, ChartBar as BarChart3, Settings, Menu, Home, Upload, Image as ImageIcon } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 interface HeaderProps {
-  activeView: string;
-  onViewChange: (view: string) => void;
   onMenuToggle: () => void;
   isMobileMenuOpen: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({ 
-  activeView, 
-  onViewChange, 
   onMenuToggle, 
   isMobileMenuOpen 
 }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const currentPath = location.pathname.split('/').pop() || 'dashboard';
+
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { id: 'map', label: 'Map View', icon: Map },
-    { id: 'reports', label: 'Reports', icon: BarChart3 },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart3, path: '/app/dashboard' },
+    { id: 'map', label: 'Map View', icon: Map, path: '/app/map' },
+    { id: 'drone', label: 'Drone Survey', icon: Upload, path: '/app/drone' },
+    { id: 'single', label: 'Single Image', icon: ImageIcon, path: '/app/single' },
+    { id: 'reports', label: 'Reports', icon: BarChart3, path: '/app/reports' },
+    { id: 'settings', label: 'Settings', icon: Settings, path: '/app/settings' },
   ];
 
   return (
@@ -39,22 +42,34 @@ const Header: React.FC<HeaderProps> = ({
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex space-x-1">
+            <Link
+              to="/"
+              className={cn(
+                'px-4 py-2 text-sm font-medium rounded-md flex items-center space-x-2',
+                location.pathname === '/' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-100'
+              )}
+            >
+              <Home className="h-5 w-5" />
+              <span>Home</span>
+            </Link>
+            
             {navItems.map((item) => {
               const Icon = item.icon;
+              const isActive = currentPath === item.id || 
+                             (currentPath === 'app' && item.id === 'dashboard');
+              
               return (
-                <button
+                <Link
                   key={item.id}
-                  onClick={() => onViewChange(item.id)}
+                  to={item.path}
                   className={cn(
-                    'flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-                    activeView === item.id
-                      ? 'bg-primary-100 text-primary-700'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    'px-4 py-2 text-sm font-medium rounded-md flex items-center space-x-2',
+                    isActive ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-100'
                   )}
                 >
-                  <Icon className="w-4 h-4" />
+                  <Icon className="h-5 w-5" />
                   <span>{item.label}</span>
-                </button>
+                </Link>
               );
             })}
           </nav>
@@ -74,23 +89,23 @@ const Header: React.FC<HeaderProps> = ({
             <nav className="space-y-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
+                const isActive = currentPath === item.id;
+                
                 return (
-                  <button
+                  <Link
                     key={item.id}
-                    onClick={() => {
-                      onViewChange(item.id);
-                      onMenuToggle();
-                    }}
+                    to={item.path}
+                    onClick={onMenuToggle}
                     className={cn(
                       'flex items-center space-x-3 w-full px-4 py-3 rounded-lg text-sm font-medium transition-colors',
-                      activeView === item.id
+                      isActive
                         ? 'bg-primary-100 text-primary-700'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                     )}
                   >
                     <Icon className="w-5 h-5" />
                     <span>{item.label}</span>
-                  </button>
+                  </Link>
                 );
               })}
             </nav>
