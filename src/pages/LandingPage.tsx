@@ -47,12 +47,12 @@ const LandingPage: React.FC = () => {
                 </a>
               </div>
             </div>
-            <div className="mt-12 lg:mt-0">
-              <div className="bg-gray-100 rounded-2xl p-2 shadow-xl">
+            <div className="mt-12 lg:mt-0 h-full flex items-center">
+              <div className="bg-gray-100 rounded-2xl p-2 shadow-xl w-full h-96 overflow-hidden">
                 <img 
-                  src="/crop-health-dashboard.png" 
+                  src="/farm.jpg" 
                   alt="Crop Health Dashboard" 
-                  className="rounded-xl w-full h-auto"
+                  className="w-full h-full object-cover rounded"
                 />
               </div>
             </div>

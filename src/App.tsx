@@ -1,13 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { MessageSquare } from 'lucide-react';
+import { Home, Drone, Camera, Map, BarChart3, Settings } from 'lucide-react';
 
 // Layout Components
 import Header from './components/Layout/Header';
+import AppLayout from './components/Layout/AppLayout';
 
 // Page Components
 import LandingPage from './pages/LandingPage';
-import InteractiveMap from './components/Map/InteractiveMap';
+import IntegratedDashboard from './components/Dashboard/IntegratedDashboard';
+import DroneSurvey from './components/Dashboard/DroneSurvey';
+import SingleImageUpload from './components/Dashboard/SingleImageUpload';
 
 // Mock Data
 import { 
@@ -15,118 +18,86 @@ import {
   mockHealthAssessments
 } from './data/mockData';
 
-// View Components
-const DashboardView: React.FC = () => (
-  <div className="space-y-6">
-    <h2 className="text-2xl font-bold">Dashboard</h2>
-    <p>Welcome to your dashboard. Select an option from the menu to get started.</p>
-  </div>
-);
+// Main App Component with State Management
+const App: React.FC = () => {
+  const [currentView, setCurrentView] = useState<'dashboard' | 'drone' | 'single' | 'map' | 'reports' | 'settings'>('dashboard');
 
-const DroneSurveyView: React.FC = () => (
-  <div className="space-y-6">
-    <h2 className="text-2xl font-bold">Drone Survey</h2>
-    <p>Upload and analyze drone survey data here.</p>
-  </div>
-);
+  const handleSelectOption = (option: 'drone' | 'single') => {
+    if (option === 'drone') {
+      setCurrentView('drone');
+    } else if (option === 'single') {
+      setCurrentView('single');
+    }
+  };
 
-const SingleImageView: React.FC = () => (
-  <div className="space-y-6">
-    <h2 className="text-2xl font-bold">Single Image Upload</h2>
-    <p>Upload a single image for analysis.</p>
-  </div>
-);
+  const handleBackToDashboard = () => {
+    setCurrentView('dashboard');
+  };
 
-const MapView: React.FC = () => (
-  <div className="h-[600px] bg-gray-100 rounded-lg">
-    <InteractiveMap 
-      healthAssessments={mockHealthAssessments}
-      fieldBoundaries={mockFieldBoundaries}
-      onLocationSelect={() => {}}
-      onAssessmentSelect={() => {}}
-    />
-  </div>
-);
 
-const ReportsView: React.FC = () => (
-  <div className="space-y-6">
-    <h2 className="text-2xl font-bold">Reports</h2>
-    <p>View and generate reports here.</p>
-  </div>
-);
+  const navigationItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: Home, path: '/app/dashboard' },
+    { id: 'drone', label: 'Drone Survey', icon: Drone, path: '/app/drone' },
+    { id: 'single', label: 'Image Analysis', icon: Camera, path: '/app/single' },
+    { id: 'map', label: 'Farm Map', icon: Map, path: '/app/map' },
+    { id: 'reports', label: 'Reports', icon: BarChart3, path: '/app/reports' },
+    { id: 'settings', label: 'Settings', icon: Settings, path: '/app/settings' },
+  ];
 
-const SettingsView: React.FC = () => (
-  <div className="space-y-6">
-    <h2 className="text-2xl font-bold">Settings</h2>
-    <p>Configure your application settings.</p>
-  </div>
-);
-
-// Wrapper component for the app layout with header and main content
-const AppLayoutWrapper: React.FC = () => {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
-  const [showChatbot, setShowChatbot] = React.useState(false);
+  const renderCurrentView = () => {
+    switch (currentView) {
+      case 'dashboard':
+        return <IntegratedDashboard />;
+      case 'drone':
+        return <DroneSurvey onBack={handleBackToDashboard} />;
+      case 'single':
+        return <SingleImageUpload onBack={handleBackToDashboard} />;
+      case 'map':
+        return <IntegratedDashboard />;
+      case 'reports':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold">Reports</h2>
+            <p>View and generate reports here.</p>
+          </div>
+        );
+      case 'settings':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold">Settings</h2>
+            <p>Configure your application settings.</p>
+          </div>
+        );
+      default:
+        return <IntegratedDashboard />;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header 
-        onMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        isMobileMenuOpen={isMobileMenuOpen}
-      />
-      
-      <main className="container mx-auto px-4 py-6">
-        <Routes>
-          <Route index element={<Navigate to="dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardView />} />
-          <Route path="drone" element={<DroneSurveyView />} />
-          <Route path="single" element={<SingleImageView />} />
-          <Route path="map" element={<MapView />} />
-          <Route path="reports" element={<ReportsView />} />
-          <Route path="settings" element={<SettingsView />} />
-        </Routes>
-      </main>
-
-      {/* Chatbot Button */}
-      <button
-        onClick={() => setShowChatbot(!showChatbot)}
-        className="fixed bottom-6 right-6 bg-primary-600 text-white p-4 rounded-full shadow-lg hover:bg-primary-700 transition-colors z-40"
-        aria-label="Toggle chatbot"
+      <AppLayout 
+        navigationItems={navigationItems}
+        currentView={currentView}
+        onViewChange={setCurrentView}
       >
-        <MessageSquare className="h-6 w-6" />
-      </button>
+        {renderCurrentView()}
+      </AppLayout>
 
-      {/* Chatbot Panel */}
-      {showChatbot && (
-        <div className="fixed bottom-20 right-6 w-80 bg-white rounded-lg shadow-xl z-50 overflow-hidden">
-          <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-            <h3 className="font-semibold">AI Assistant</h3>
-            <button 
-              onClick={() => setShowChatbot(false)}
-              className="text-gray-500 hover:text-gray-700"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="p-4 h-80 overflow-y-auto">
-            <p className="text-sm text-gray-600">Chat functionality coming soon!</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 
 // Main App Component with Routing
-const App: React.FC = () => {
+const AppRouter: React.FC = () => {
   return (
     <Router>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/app/*" element={<AppLayoutWrapper />} />
+        <Route path="/app/*" element={<App />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );
 };
 
-export default App;
+export default AppRouter;

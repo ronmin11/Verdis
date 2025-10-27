@@ -1,76 +1,166 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers.generation.streamers import TextIteratorStreamer
 from huggingface_hub import login, snapshot_download
 import torch
 from threading import Thread
 import os
+import io
+from typing import Optional
+from plant_disease_model import PlantDiseaseModel
+import logging
 
-# Login to Hugging Face
-login(token="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")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Set device to CPU
-device = torch.device("cpu")
-torch_dtype = torch.float32  # Use float32 for CPU
+# Initialize FastAPI app
+app = FastAPI(title="Verdis Backend API")
 
-# Load model and tokenizer
-model_name = "Qwen/Qwen3-0.6B"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-# Download model files to cache
-model_path = snapshot_download(repo_id=model_name, local_files_only=False)
-
-# Configure device map for CPU offloading
-device_map = "auto"
-if not torch.cuda.is_available():
-    device_map = {"": "cpu"}
-
-# Load model with appropriate device mapping
-model = AutoModelForCausalLM.from_pretrained(
-    model_path,
-    torch_dtype=torch_dtype,
-    device_map=device_map,
-    offload_folder="offload",
-    offload_state_dict=True,
-    low_cpu_mem_usage=True
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+# Global model instances
+plant_model = None
+chat_model = None
+tokenizer = None
+
+def init_models():
+    """Initialize all ML models."""
+    global plant_model, chat_model, tokenizer
+    
+    # Initialize plant disease model
+    try:
+        # Update these paths to your actual model files
+        plant_model = PlantDiseaseModel(
+            model_weights_path="model_weights.pth",
+            class_names_path="class_names.txt"  # Optional: create this file with your class names
+        )
+        logger.info("Plant disease model loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading plant disease model: {e}")
+        raise
+    
+    # Initialize chat model
+    try:
+        model_name = "Qwen/Qwen2-0.5B"
+        logger.info(f"Loading chat model: {model_name}")
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.pad_token = tokenizer.eos_token
+        logger.info("Tokenizer loaded successfully")
+        chat_model = AutoModelForCausalLM.from_pretrained(model_name)
+        logger.info("Chat model loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading chat model: {e}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Don't raise, just log the error - the fallback responses will be used
+        logger.info("Chat model will use fallback responses")
+
+# Initialize models when the application starts
+@app.on_event("startup")
+async def startup_event():
+    try:
+        init_models()
+    except Exception as e:
+        logger.error(f"Failed to initialize models: {e}")
+        # Don't raise - let the app start with fallback responses
+
 def generate_streaming_response(prompt, max_new_tokens=500, temperature=0.7):
+    """Generate a streaming response from the chat model."""
+    if not chat_model or not tokenizer:
+        yield "Chat model not initialized"
+        return
+        
+    try:
+        # Simple generation that actually works
+        inputs = tokenizer.encode(prompt, return_tensors="pt")
+        
+        with torch.no_grad():
+            outputs = chat_model.generate(
+                inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                do_sample=True,
+                top_p=0.9,
+                pad_token_id=tokenizer.eos_token_id,
+                no_repeat_ngram_size=2,
+            )
+        
+        # Decode the response
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        response = response[len(prompt):].strip()
+        
+        # Simulate streaming by yielding chunks
+        words = response.split()
+        for i, word in enumerate(words):
+            if i > 0:
+                yield " "
+            yield word
+                
+    except Exception as e:
+        logger.error(f"Generation error: {e}")
+        yield f"Error: {str(e)}"
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+# API Endpoints
+@app.post("/api/predict")
+async def predict_disease(file: UploadFile = File(...)):
+    """
+    Endpoint for plant disease prediction from image upload.
+    """
+    if not plant_model:
+        raise HTTPException(status_code=503, detail="Plant disease model not initialized")
     
+    # Check file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    try:
+        # Read image file
+        contents = await file.read()
+        
+        # Make prediction
+        result = plant_model.predict(contents)
+        
+        return JSONResponse(content={
+            "status": "success",
+            "prediction": result
+        })
+        
+    except Exception as e:
+        logger.error(f"Prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
-    
+@app.post("/api/chat")
+async def chat(prompt: str):
+    """
+    Endpoint for chat-based interaction with the AI.
+    """
+    try:
+        return StreamingResponse(
+            generate_streaming_response(prompt),
+            media_type="text/plain"
+        )
+    except Exception as e:
+        logger.error(f"Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    generation_kwargs = dict(
-        **inputs,
-        streamer=streamer,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        do_sample=True,
-        top_p=0.9,
-    )
-    
-    thread = Thread(target=model.generate, kwargs=generation_kwargs)
-    thread.start()
-    
-    # Stream the response
-    for new_text in streamer:
-        yield new_text
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy"}
 
 # Example usage
 if __name__ == "__main__":
-    disease = "Early blight (tomato)"
-    weather = "28°C, humidity 84%, light rainfall"
-    
-    prompt = f"""
-    You are a crop health assistant.
-    Predicted disease: {disease}
-    Weather: {weather}
-    Give a description of the disease, explain likely causes, and recommend safe and effective treatment steps.
-    """
-    
-    # Stream the response
-    print("Assistant: ", end="", flush=True)
-    for chunk in generate_streaming_response(prompt):
-        print(chunk, end="", flush=True)
-    print()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

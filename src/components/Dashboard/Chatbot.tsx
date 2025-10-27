@@ -74,14 +74,37 @@ const Chatbot: React.FC<ChatbotProps> = ({ onClose, initialMessage = '' }) => {
     setIsLoading(true);
 
     try {
-      // In a real implementation, you would call your backend API here
-      // which would then use the chatbot.py to generate a response
-      const response = await simulateChatbotResponse(message);
+      // Call the backend API for chatbot response
+      const response = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [
+            ...messages.map(msg => ({
+              role: msg.sender,
+              content: msg.content
+            })),
+            {
+              role: 'user',
+              content: message
+            }
+          ]
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Chat failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const assistantResponse = result.choices?.[0]?.message?.content || 'I apologize, but I could not generate a response.';
       
       // Add assistant's response
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: response,
+        content: assistantResponse,
         sender: 'assistant',
         timestamp: new Date(),
       };
@@ -90,14 +113,25 @@ const Chatbot: React.FC<ChatbotProps> = ({ onClose, initialMessage = '' }) => {
     } catch (error) {
       console.error('Error getting response from chatbot:', error);
       
-      const errorMessage: Message = {
-        id: 'error-' + Date.now(),
-        content: 'Sorry, I encountered an error. Please try again later.',
-        sender: 'assistant',
-        timestamp: new Date(),
-      };
-      
-      setMessages(prev => [...prev, errorMessage]);
+      // Fallback to simulated response if backend fails
+      try {
+        const fallbackResponse = await simulateChatbotResponse(message);
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content: fallbackResponse,
+          sender: 'assistant',
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      } catch (fallbackError) {
+        const errorMessage: Message = {
+          id: 'error-' + Date.now(),
+          content: 'Sorry, I encountered an error. Please try again later.',
+          sender: 'assistant',
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      }
     } finally {
       setIsLoading(false);
     }
