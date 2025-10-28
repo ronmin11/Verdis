@@ -15,7 +15,6 @@ import logging
 
 # Add the current directory to the path so we can import chatbot
 sys.path.append(str(Path(__file__).parent))
-from chatbot import generate_streaming_response
 from plant_disease_model import PlantDiseaseModel
 from odm_service import ODMService
 from database import DatabaseService
@@ -150,22 +149,89 @@ async def startup_event():
         db_service = DatabaseService()
         logger.info("Database service initialized successfully")
 
-        # Initialize chatbot model - Using Llama-3.2-1B-Instruct for better performance
-        try:
-            from transformers import AutoTokenizer, AutoModelForCausalLM
-            # Using Llama-3.2-1B-Instruct model
-            model_name = "meta-llama/Llama-3.2-1B-Instruct"
-            
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            chat_model = AutoModelForCausalLM.from_pretrained(model_name)
-            logger.info(f"Chatbot model loaded successfully: {model_name}")
-        except Exception as e:
-            logger.warning(f"Failed to load chatbot model: {e}")
-            logger.info("Chatbot will use fallback responses")
+        # Initialize chatbot model in background (non-blocking)
+        import asyncio
+        asyncio.create_task(load_chatbot_model())
 
     except Exception as e:
         logger.error(f"Error initializing services: {e}")
         raise
+
+async def load_chatbot_model():
+    """Load chatbot model in background without blocking startup."""
+    global chat_model, tokenizer
+    try:
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+        model_name = "meta-llama/Llama-3.2-1B-Instruct"
+        logger.info(f"Loading Llama model in background: {model_name}")
+        
+        # Load tokenizer first (faster)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.pad_token = tokenizer.eos_token
+        logger.info("Tokenizer loaded successfully")
+        
+        # Load model
+        logger.info("Loading Llama model (this may take a moment)...")
+        chat_model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,  # Use half precision for faster loading
+            device_map="auto"  # Auto device mapping
+        )
+        logger.info("Llama model loaded successfully")
+    except Exception as e:
+        logger.warning(f"Failed to load Llama model: {e}")
+        logger.info("Chat will use fallback responses")
+        # Set to None to ensure fallback works
+        chat_model = None
+        tokenizer = None
+
+def generate_response(prompt, max_new_tokens=500, temperature=0.7):
+    """Simple response generation - no complex processing."""
+    if not chat_model or not tokenizer:
+        logger.warning("Model not loaded, using fallback response")
+        return "I'm an agricultural assistant. I can help with plant disease questions. What would you like to know about crop health?"
+
+    try:
+        # Proper prompt for agricultural assistant
+        system_prompt = "You are a helpful agricultural assistant. Provide clear, practical advice about plant diseases and crop health. Always give complete, detailed responses."
+        simple_prompt = f"{system_prompt}\n\nUser: {prompt}\n\nAssistant:"
+        logger.info(f"Generating response for prompt: {simple_prompt[:100]}...")
+        
+        # Generate response
+        inputs = tokenizer.encode(simple_prompt, return_tensors="pt")
+        device = next(chat_model.parameters()).device
+        inputs = inputs.to(device)
+        
+        with torch.no_grad():
+            outputs = chat_model.generate(
+                inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                do_sample=True,
+                top_p=0.9,
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.1,
+                no_repeat_ngram_size=2,
+            )
+        
+        # Decode response
+        full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        logger.info(f"Full model response: {full_response}")
+        
+        response = full_response[len(simple_prompt):].strip()
+        logger.info(f"Extracted response: {response}")
+        
+        # If no response or empty, provide fallback
+        if not response or len(response) < 5:
+            response = f"Based on your question about '{prompt}', here are some general agricultural recommendations: Monitor your crops regularly, check for signs of disease, and consider consulting with local agricultural experts for specific treatment options."
+        
+        return response
+
+    except Exception as e:
+        logger.error(f"Generation error: {e}")
+        return f"I understand you're asking about: '{prompt}'. For plant health advice, I recommend monitoring your crops regularly and consulting with agricultural experts for specific treatment options."
+
 
 # Health check endpoint
 @app.get("/api/health")
@@ -182,211 +248,14 @@ async def chat_stream(chat_request: ChatRequest):
         if not last_message:
             raise HTTPException(status_code=400, detail="No user message found")
         
-        # Check if chatbot model is available
-        if not chat_model or not tokenizer:
-            # Use fallback response for streaming
-            def fallback_generate():
-                yield "data: I'm currently using a simplified response system. Let me provide you with helpful information based on your question.\n\n"
-                
-                # Generate fallback response
-                user_question = last_message.content.lower()
-                if "treatment" in user_question or "cure" in user_question or "fix" in user_question:
-                    response = """**Treatment Recommendations:**
-
-1. **Immediate Actions:**
-   - Remove and destroy infected plant material
-   - Improve air circulation around plants
-   - Avoid overhead watering
-
-2. **Fungicide Applications:**
-   - Apply copper-based fungicides as a preventive measure
-   - Use systemic fungicides for active infections
-   - Follow label instructions carefully
-
-3. **Cultural Controls:**
-   - Implement crop rotation (2-3 year intervals)
-   - Use disease-resistant varieties
-   - Maintain proper plant spacing
-
-**Important:** Always consult with local agricultural extension services for region-specific recommendations."""
-                    
-                elif "prevent" in user_question or "prevention" in user_question:
-                    response = """**Prevention Strategies:**
-
-1. **Site Preparation:**
-   - Choose well-drained locations
-   - Ensure proper soil pH and fertility
-   - Plan for adequate air circulation
-
-2. **Planting Practices:**
-   - Use disease-free seeds and transplants
-   - Implement proper spacing
-   - Avoid planting in low-lying areas
-
-3. **Cultural Management:**
-   - Practice crop rotation
-   - Remove plant debris regularly
-   - Water at the base of plants
-
-**Pro Tip:** Prevention is always more cost-effective than treatment!"""
-                    
-                elif "symptom" in user_question or "sign" in user_question or "look" in user_question:
-                    response = """**Common Disease Symptoms to Watch For:**
-
-1. **Leaf Symptoms:**
-   - Yellowing or browning of leaves
-   - Spots, lesions, or blotches
-   - Wilting or curling
-   - Premature leaf drop
-
-2. **Stem Symptoms:**
-   - Cankers or lesions
-   - Discoloration
-   - Wilting or stunting
-
-**Early Detection Tips:**
-- Inspect plants regularly (weekly)
-- Look for changes in color, texture, or growth
-- Check both upper and lower leaf surfaces"""
-                    
-                else:
-                    response = f"""I understand you're asking about: "{last_message.content}"
-
-Based on the crop health analysis provided, here are some general recommendations:
-
-1. **Monitor the affected area closely** for any changes in symptoms
-2. **Consider environmental factors** like humidity, temperature, and soil conditions  
-3. **Implement proper crop rotation** to prevent disease buildup
-4. **Use appropriate fungicides or treatments** as recommended by agricultural experts
-
-**For more specific advice, try asking about:**
-- Treatment options
-- Prevention strategies  
-- Symptom identification"""
-                
-                # Stream the response word by word for real-time effect
-                import time
-                words = response.split(' ')
-                for i, word in enumerate(words):
-                    # Add space after word except for last word
-                    if i < len(words) - 1:
-                        yield f"data: {word} \n\n"
-                    else:
-                        yield f"data: {word}\n\n"
-                    time.sleep(0.05)  # Small delay for smooth streaming
-                
-                yield "data: [DONE]\n\n"
-            
-            return StreamingResponse(fallback_generate(), media_type="text/plain")
-        
+        # Use the local implementation
         def generate():
             try:
-                # Simple prompt
-                prompt = f"User asks: {last_message.content}. Provide helpful agricultural advice:"
-                
-                # Generate response with proper streaming and formatting
-                if chat_model and tokenizer:
-                    # Create a better prompt for agricultural advice
-                    agricultural_prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-You are an agricultural expert. Provide clear, concise advice about plant diseases. Use bullet points and proper formatting.
-
-<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-{last_message.content}
-
-<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-**Diagnosis:**
-- Identify the specific disease affecting the crop
-
-**Treatment:**
-- Apply appropriate fungicides or treatments
-- Follow recommended application schedules
-
-**Prevention:**
-- Implement proper crop rotation
-- Maintain good field hygiene
-- Monitor weather conditions
-
-**End of recommendations.**"""
-                    
-                    inputs = tokenizer(agricultural_prompt, return_tensors="pt")
-                    
-                    # Use TextIteratorStreamer for proper streaming
-                    from transformers.generation.streamers import TextIteratorStreamer
-                    from threading import Thread
-                    
-                    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
-                    
-                    generation_kwargs = dict(
-                        **inputs,
-                        streamer=streamer,
-                        max_new_tokens=100,  # Much shorter output
-                        temperature=0.5,  # Lower temperature for more focused responses
-                        do_sample=True,
-                        top_p=0.8,
-                        pad_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.5,  # Higher repetition penalty
-                        no_repeat_ngram_size=2,  # Prevent repeating phrases
-                    )
-                    
-                    # Start generation in a separate thread
-                    thread = Thread(target=chat_model.generate, kwargs=generation_kwargs)
-                    thread.start()
-                    
-                    # Stream the response with proper formatting
-                    yield "data: **Agricultural Advice:**\n\n"
-                    import time
-                    time.sleep(0.2)
-                    
-                    # Stream the response in chunks with proper formatting
-                    buffer = ""
-                    for new_text in streamer:
-                        if new_text and new_text.strip():
-                            # Clean up the text and filter out unwanted content
-                            clean_text = new_text.replace('\n', ' ').strip()
-                            # Skip if it contains unwanted tokens or prompt remnants
-                            if clean_text and not any(unwanted in clean_text.lower() for unwanted in ['data:', 'analysis:', 'disease:', 'confidence', '<|endoftext|>', 'apple___apple_scab']):
-                                buffer += clean_text + " "  # Add space between words
-                                # Stream when we have a complete sentence or phrase
-                                if len(buffer) > 80 and ('.' in buffer or '!' in buffer or '?' in buffer):
-                                    # Find the last complete sentence
-                                    last_sentence_end = max(buffer.rfind('.'), buffer.rfind('!'), buffer.rfind('?'))
-                                    if last_sentence_end > 0:
-                                        sentence = buffer[:last_sentence_end + 1].strip()
-                                        # Clean up any remaining concatenated words
-                                        sentence = sentence.replace('apple___apple_scab', 'apple scab')
-                                        sentence = sentence.replace('apple___', 'apple ')
-                                        # Format with bullet points and spacing
-                                        if sentence.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
-                                            yield f"data: • {sentence}\n\n"
-                                        elif sentence.startswith(('Treatment:', 'Prevention:', 'Management:', 'Symptoms:', 'Planting:', 'Diseases Control Measures:')):
-                                            yield f"data: **{sentence}**\n\n"
-                                        else:
-                                            yield f"data: {sentence}\n\n"
-                                        buffer = buffer[last_sentence_end + 1:].strip()
-                                    import time
-                                time.sleep(0.05)
-                    
-                    # Stream any remaining text - only if it's a complete sentence
-                    if buffer.strip():
-                        final_text = buffer.strip().replace('apple___apple_scab', 'apple scab').replace('apple___', 'apple ')
-                        # Only stream if it ends with proper punctuation
-                        if final_text.endswith(('.', '!', '?', ':')):
-                            yield f"data: {final_text}\n\n"
-                        else:
-                            # Complete the sentence if it's incomplete
-                            yield f"data: {final_text}.\n\n"
-                else:
-                    yield "data: **Agricultural Advice:**\n\n"
-                    yield "data: • Monitor crops regularly for disease signs\n\n"
-                    yield "data: • Use proper irrigation and spacing\n\n"
-                    yield "data: • Apply fungicides when needed\n\n"
-                
+                response = generate_response(last_message.content)
+                yield f"data: {response}\n\n"
                 yield "data: [DONE]\n\n"
             except Exception as e:
-                logger.error(f"Streaming error: {e}")
+                logger.error(f"Generation error: {e}")
                 yield f"data: Sorry, I encountered an error generating a response. Please try again.\n\n"
                 yield "data: [DONE]\n\n"
         
@@ -403,145 +272,15 @@ async def chat(chat_request: ChatRequest):
         if not last_message:
             raise HTTPException(status_code=400, detail="No user message found")
         
-        # Check if chatbot model is available
-        if chat_model and tokenizer:
-            try:
-                # Use streaming response with AI model
-                response_text = ""
-                for chunk in generate_streaming_response(last_message.content):
-                    response_text += chunk
-                
-                return {
-                    "choices": [{
-                        "message": {
-                            "role": "assistant",
-                            "content": response_text
-                        }
-                    }]
-                }
-            except Exception as e:
-                logger.error(f"Error generating streaming response: {e}")
-                # Fall back to rule-based response
-        
-        # Generate a response based on the user's question (fallback)
-        user_question = last_message.content.lower()
-        
-        # Create a contextual response based on the question
-        if "treatment" in user_question or "cure" in user_question or "fix" in user_question:
-            response = """**Treatment Recommendations:**
-
-1. **Immediate Actions:**
-   - Remove and destroy infected plant material
-   - Improve air circulation around plants
-   - Avoid overhead watering
-
-2. **Fungicide Applications:**
-   - Apply copper-based fungicides as a preventive measure
-   - Use systemic fungicides for active infections
-   - Follow label instructions carefully
-
-3. **Cultural Controls:**
-   - Implement crop rotation (2-3 year intervals)
-   - Use disease-resistant varieties
-   - Maintain proper plant spacing
-
-4. **Monitoring:**
-   - Check plants regularly for new symptoms
-   - Keep records of treatments and results
-   - Adjust strategy based on effectiveness
-
-**Important:** Always consult with local agricultural extension services for region-specific recommendations and proper fungicide selection."""
-            
-        elif "prevent" in user_question or "prevention" in user_question:
-            response = """**Prevention Strategies:**
-
-1. **Site Preparation:**
-   - Choose well-drained locations
-   - Ensure proper soil pH and fertility
-   - Plan for adequate air circulation
-
-2. **Planting Practices:**
-   - Use disease-free seeds and transplants
-   - Implement proper spacing
-   - Avoid planting in low-lying areas
-
-3. **Cultural Management:**
-   - Practice crop rotation
-   - Remove plant debris regularly
-   - Water at the base of plants
-
-4. **Monitoring:**
-   - Regular field inspections
-   - Early detection of symptoms
-   - Weather-based disease forecasting
-
-5. **Resistant Varieties:**
-   - Select cultivars with known resistance
-   - Rotate between different resistance genes
-   - Maintain genetic diversity
-
-**Pro Tip:** Prevention is always more cost-effective than treatment!"""
-            
-        elif "symptom" in user_question or "sign" in user_question or "look" in user_question:
-            response = """**Common Disease Symptoms to Watch For:**
-
-1. **Leaf Symptoms:**
-   - Yellowing or browning of leaves
-   - Spots, lesions, or blotches
-   - Wilting or curling
-   - Premature leaf drop
-
-2. **Stem Symptoms:**
-   - Cankers or lesions
-   - Discoloration
-   - Wilting or stunting
-
-3. **Root Symptoms:**
-   - Root rot or discoloration
-   - Poor root development
-   - Stunted growth
-
-4. **Fruit/Flower Symptoms:**
-   - Spots or lesions on fruit
-   - Blossom end rot
-   - Poor fruit development
-
-**Early Detection Tips:**
-- Inspect plants regularly (weekly)
-- Look for changes in color, texture, or growth
-- Check both upper and lower leaf surfaces
-- Monitor environmental conditions
-
-**When to Act:**
-- Act immediately when symptoms are first noticed
-- Don't wait for severe damage
-- Document symptoms with photos
-- Consult experts if unsure"""
-            
-        else:
-            response = f"""I understand you're asking about: "{last_message.content}"
-
-Based on the crop health analysis provided, here are some general recommendations:
-
-1. **Monitor the affected area closely** for any changes in symptoms
-2. **Consider environmental factors** like humidity, temperature, and soil conditions  
-3. **Implement proper crop rotation** to prevent disease buildup
-4. **Use appropriate fungicides or treatments** as recommended by agricultural experts
-5. **Maintain good field hygiene** by removing infected plant material
-
-**For more specific advice, try asking about:**
-- Treatment options
-- Prevention strategies  
-- Symptom identification
-- Environmental factors
-
-**Important:** For accurate diagnosis and treatment, please consult with local agricultural extension services or plant pathologists who can provide region-specific advice."""
+        # Use the local implementation
+        # Generate response using local function
+        response_text = generate_response(last_message.content)
         
         return {
             "choices": [{
                 "message": {
                     "role": "assistant",
-                    "content": response
+                    "content": response_text
                 }
             }]
         }
