@@ -185,23 +185,36 @@ async def load_chatbot_model():
         chat_model = None
         tokenizer = None
 
-def generate_response(prompt, max_new_tokens=500, temperature=0.7):
-    """Simple response generation - no complex processing."""
+def generate_response(prompt, max_new_tokens=800, temperature=0.8):
+    """Generate a clean, well-formatted chatbot response using the local model."""
     if not chat_model or not tokenizer:
         logger.warning("Model not loaded, using fallback response")
-        return "I'm an agricultural assistant. I can help with plant disease questions. What would you like to know about crop health?"
+        return (
+            "I'm an agricultural assistant. I can help with plant disease questions. "
+            "What would you like to know about crop health?"
+        )
 
     try:
-        # Proper prompt for agricultural assistant
-        system_prompt = "You are a helpful agricultural assistant. Provide clear, practical advice about plant diseases and crop health. Always give complete, detailed responses."
-        simple_prompt = f"{system_prompt}\n\nUser: {prompt}\n\nAssistant:"
-        logger.info(f"Generating response for prompt: {simple_prompt[:100]}...")
-        
-        # Generate response
-        inputs = tokenizer.encode(simple_prompt, return_tensors="pt")
+        # === Construct a clean conversation prompt ===
+        conversation = (
+            "<|begin_of_text|>"
+            "<|start_header_id|>system<|end_header_id|>\n"
+            "You are a helpful agricultural assistant. "
+            "Provide clear, practical advice about plant diseases and crop health. "
+            "Keep responses informative and don't cut off the response mid sentence.<|eot_id|>\n"
+            "<|start_header_id|>user<|end_header_id|>\n"
+            f"{prompt.strip()}<|eot_id|>\n"
+            "<|start_header_id|>assistant<|end_header_id|>\n"
+        )
+
+        logger.info(f"Generating response for: {prompt[:60]}...")
+
+        # === Encode input and move to correct device ===
+        inputs = tokenizer.encode(conversation, return_tensors="pt")
         device = next(chat_model.parameters()).device
         inputs = inputs.to(device)
-        
+
+        # === Generate output ===
         with torch.no_grad():
             outputs = chat_model.generate(
                 inputs,
@@ -209,28 +222,52 @@ def generate_response(prompt, max_new_tokens=500, temperature=0.7):
                 temperature=temperature,
                 do_sample=True,
                 top_p=0.9,
+                top_k=50,
+                repetition_penalty=1.1,
+                no_repeat_ngram_size=3,
                 pad_token_id=tokenizer.eos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.1,
-                no_repeat_ngram_size=2,
+                early_stopping=True,
             )
-        
-        # Decode response
-        full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        logger.info(f"Full model response: {full_response}")
-        
-        response = full_response[len(simple_prompt):].strip()
-        logger.info(f"Extracted response: {response}")
-        
-        # If no response or empty, provide fallback
-        if not response or len(response) < 5:
-            response = f"Based on your question about '{prompt}', here are some general agricultural recommendations: Monitor your crops regularly, check for signs of disease, and consider consulting with local agricultural experts for specific treatment options."
-        
+
+        # === Decode and clean ===
+        decoded = tokenizer.decode(outputs[0], skip_special_tokens=False)
+
+        # Extract only the assistant's part
+        if "<|start_header_id|>assistant<|end_header_id|>" in decoded:
+            response = decoded.split("<|start_header_id|>assistant<|end_header_id|>")[-1]
+        else:
+            response = decoded
+
+        # Trim everything after the next <|eot_id|>
+        if "<|eot_id|>" in response:
+            response = response.split("<|eot_id|>")[0]
+
+        # Remove leftover tokens or metadata
+        import re
+        response = re.sub(r"<\|.*?\|>", "", response).strip()
+
+        # === Final fallback if response is too short ===
+        if not response or len(response) < 10:
+            response = (
+                f"Based on your question about '{prompt}', here are some general agricultural recommendations:\n\n"
+                "• Monitor your crops regularly for signs of disease\n"
+                "• Check for discoloration, spots, or unusual growth patterns\n"
+                "• Consider environmental factors like humidity and temperature\n"
+                "• Consult with local agricultural experts for specific treatment options\n"
+                "• Practice good crop rotation and field sanitation"
+            )
+
+        logger.info(f"Final cleaned response: {response}")
         return response
 
     except Exception as e:
         logger.error(f"Generation error: {e}")
-        return f"I understand you're asking about: '{prompt}'. For plant health advice, I recommend monitoring your crops regularly and consulting with agricultural experts for specific treatment options."
+        return (
+            f"I understand you're asking about: '{prompt}'. "
+            "For plant health advice, I recommend monitoring your crops regularly and consulting with "
+            "agricultural experts for specific treatment options."
+        )
 
 
 # Health check endpoint
@@ -238,31 +275,49 @@ def generate_response(prompt, max_new_tokens=500, temperature=0.7):
 async def health_check():
     return {"status": "ok", "timestamp": datetime.utcnow()}
 
+# Simple test endpoint for debugging
+@app.get("/api/test")
+async def test_endpoint():
+    return {"message": "Backend is working!", "timestamp": datetime.utcnow()}
 
 @app.post("/api/chat/stream")
 async def chat_stream(chat_request: ChatRequest):
     """Streaming chat endpoint for real-time responses"""
     try:
-        # Get the last user message
+        # Get the latest user message
         last_message = next((msg for msg in reversed(chat_request.messages) if msg.role == "user"), None)
         if not last_message:
             raise HTTPException(status_code=400, detail="No user message found")
-        
-        # Use the local implementation
-        def generate():
+
+        async def event_stream():
             try:
+                # Generate response normally (non-streaming model output)
                 response = generate_response(last_message.content)
+                # Format for SSE
                 yield f"data: {response}\n\n"
                 yield "data: [DONE]\n\n"
             except Exception as e:
-                logger.error(f"Generation error: {e}")
-                yield f"data: Sorry, I encountered an error generating a response. Please try again.\n\n"
+                logger.error(f"Error while generating response: {e}")
+                yield "data: Sorry, an error occurred while generating a response.\n\n"
                 yield "data: [DONE]\n\n"
-        
-        return StreamingResponse(generate(), media_type="text/plain")
+
+        # ✅ Correct SSE headers and media type
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Transfer-Encoding": "chunked",
+                "Access-Control-Allow-Origin": "*"
+            },
+        )
+
     except Exception as e:
         logger.error(f"Stream chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest):

@@ -113,124 +113,47 @@ const SingleImageUpload: React.FC<SingleImageUploadProps> = ({ onBack }) => {
     setChatMessages(prev => [...prev, userMessage]);
     
     try {
-      // Try streaming first, fallback to regular chat
-      try {
-        const streamResponse = await fetch('http://localhost:8000/api/chat/stream', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: [
-              ...chatMessages.map(msg => ({
-                role: msg.sender,
-                content: msg.content
-              })),
-              {
-                role: 'user',
-                content: `Crop Health Analysis:
-                - Disease: ${prediction.class} (${(prediction.confidence * 100).toFixed(1)}% confidence)
-                - Description: ${prediction.description}
-                
-                User Question: ${feedbackMessage}
-                
-                Please provide detailed advice and recommendations.`
-              }
-            ]
-          }),
-        });
-
-        if (streamResponse.ok) {
-          // Handle streaming response
-          const reader = streamResponse.body?.getReader();
-          if (reader) {
-            let assistantResponse = '';
-            const assistantMessage = {
-              id: (Date.now() + 1).toString(),
-              content: '',
-              sender: 'assistant' as const,
-              timestamp: new Date()
-            };
-            setChatMessages(prev => [...prev, assistantMessage]);
-
-            const decoder = new TextDecoder();
-            let buffer = '';
-            
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
+      // Use regular chat API (no streaming)
+      const response = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [
+            ...chatMessages.map(msg => ({
+              role: msg.sender,
+              content: msg.content
+            })),
+            {
+              role: 'user',
+              content: `Crop Health Analysis:
+              - Disease: ${prediction.class} (${(prediction.confidence * 100).toFixed(1)}% confidence)
+              - Description: ${prediction.description}
               
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || ''; // Keep incomplete line in buffer
+              User Question: ${feedbackMessage}
               
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  const data = line.slice(6).trim();
-                  if (data === '[DONE]' || data === '') continue;
-                  
-                  assistantResponse += data;
-                  // Update the last message with streaming content
-                  setChatMessages(prev => {
-                    const newMessages = [...prev];
-                    const lastMessage = newMessages[newMessages.length - 1];
-                    if (lastMessage && lastMessage.sender === 'assistant') {
-                      lastMessage.content = assistantResponse;
-                    }
-                    return newMessages;
-                  });
-                }
-              }
+              Please provide detailed advice and recommendations.`
             }
-          }
-        } else {
-          throw new Error('Streaming failed, falling back to regular chat');
-        }
-      } catch (streamError) {
-        console.log('Streaming failed, using regular chat:', streamError);
-        
-        // Fallback to regular chat API
-        const response = await fetch('http://localhost:8000/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: [
-              ...chatMessages.map(msg => ({
-                role: msg.sender,
-                content: msg.content
-              })),
-              {
-                role: 'user',
-                content: `Crop Health Analysis:
-                - Disease: ${prediction.class} (${(prediction.confidence * 100).toFixed(1)}% confidence)
-                - Description: ${prediction.description}
-                
-                User Question: ${feedbackMessage}
-                
-                Please provide detailed advice and recommendations.`
-              }
-            ]
-          }),
-        });
+          ]
+        }),
+      });
 
-        if (!response.ok) {
-          throw new Error(`Chat failed: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        const assistantResponse = result.choices?.[0]?.message?.content || 'I apologize, but I could not generate a response.';
-
-        // Add assistant's response to chat
-        const assistantMessage = {
-          id: (Date.now() + 1).toString(),
-          content: assistantResponse,
-          sender: 'assistant' as const,
-          timestamp: new Date()
-        };
-        setChatMessages(prev => [...prev, assistantMessage]);
+      if (!response.ok) {
+        throw new Error(`Chat failed: ${response.statusText}`);
       }
+
+      const result = await response.json();
+      const assistantResponse = result.choices?.[0]?.message?.content || 'I apologize, but I could not generate a response.';
+
+      // Add assistant's response to chat
+      const assistantMessage = {
+        id: (Date.now() + 1).toString(),
+        content: assistantResponse,
+        sender: 'assistant' as const,
+        timestamp: new Date()
+      };
+      setChatMessages(prev => [...prev, assistantMessage]);
       
       // Reset the feedback message
       setFeedbackMessage('');

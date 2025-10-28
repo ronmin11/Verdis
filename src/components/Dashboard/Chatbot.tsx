@@ -73,7 +73,31 @@ const Chatbot: React.FC<ChatbotProps> = ({ onClose, initialMessage = '' }) => {
     setInput('');
     setIsLoading(true);
 
+    // First test if backend is reachable
     try {
+      console.log('Testing backend connectivity...');
+      const testResponse = await fetch('http://localhost:8000/api/test');
+      const testResult = await testResponse.json();
+      console.log('Backend test result:', testResult);
+    } catch (testError) {
+      console.error('Backend connectivity test failed:', testError);
+    }
+
+    try {
+      console.log('Sending request to chatbot API...');
+      console.log('Request payload:', {
+        messages: [
+          ...messages.map(msg => ({
+            role: msg.sender,
+            content: msg.content
+          })),
+          {
+            role: 'user',
+            content: message
+          }
+        ]
+      });
+
       // Call the backend API for chatbot response
       const response = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
@@ -94,12 +118,19 @@ const Chatbot: React.FC<ChatbotProps> = ({ onClose, initialMessage = '' }) => {
         }),
       });
 
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+
       if (!response.ok) {
-        throw new Error(`Chat failed: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('API Error Response:', errorText);
+        throw new Error(`Chat failed: ${response.statusText} - ${errorText}`);
       }
 
       const result = await response.json();
+      console.log('Chatbot API response:', result);
       const assistantResponse = result.choices?.[0]?.message?.content || 'I apologize, but I could not generate a response.';
+      console.log('Extracted response:', assistantResponse);
       
       // Add assistant's response
       const assistantMessage: Message = {
@@ -112,6 +143,7 @@ const Chatbot: React.FC<ChatbotProps> = ({ onClose, initialMessage = '' }) => {
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Error getting response from chatbot:', error);
+      console.error('Error details:', error.message);
       
       // Fallback to simulated response if backend fails
       try {
