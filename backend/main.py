@@ -2,6 +2,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 from typing import Optional, List
@@ -16,7 +17,7 @@ import logging
 # Add the current directory to the path so we can import chatbot
 sys.path.append(str(Path(__file__).parent))
 from plant_disease_model import PlantDiseaseModel
-from odm_service import ODMService
+from opencv_service import OpenCVImageProcessor
 from database import DatabaseService
 import torch
 import requests
@@ -37,71 +38,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files for serving processed images
+app.mount("/opencv_outputs", StaticFiles(directory="opencv_outputs"), name="opencv_outputs")
+
 # Global model instances
 plant_model = None
-odm_service = None
+opencv_processor = None
 db_service = None
 chat_model = None
 tokenizer = None
 
-# NodeODM REST API Client
-class NodeODMClient:
-    def __init__(self, base_url="http://localhost:3000"):
-        self.base_url = base_url
-    
-    def create_task(self, image_paths, options=None):
-        """Create a new processing task using NodeODM REST API"""
-        if options is None:
-            options = {
-                'dsm': True,
-                'orthophoto': True,
-                'point-cloud': True,
-                'mesh': True,
-                'gltf': True,
-                'cog': True,
-                'pc-ept': True
-            }
-        
-        logger.info(f"Creating ODM task with {len(image_paths)} images")
-        logger.info(f"Options: {options}")
-        
-        files = []
-        for image_path in image_paths:
-            if os.path.exists(image_path):
-                with open(image_path, 'rb') as f:
-                    files.append(('images', (os.path.basename(image_path), f.read(), 'image/jpeg')))
-            else:
-                logger.warning(f"Image file not found: {image_path}")
-        
-        if not files:
-            raise Exception("No valid image files found")
-        
-        try:
-            logger.info(f"Creating task with NodeODM at: {self.base_url}")
-            response = requests.post(f"{self.base_url}/task/new", files=files, data=options, timeout=30, 
-                                   verify=False, headers={'Connection': 'close'})
-            logger.info(f"NodeODM API response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"Task created successfully: {result}")
-                return result
-            else:
-                logger.error(f"NodeODM API error: {response.status_code} - {response.text}")
-                raise Exception(f"Failed to create task: {response.status_code} - {response.text}")
-                
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"Cannot connect to NodeODM server: {str(e)}")
-            raise Exception("NodeODM server is not running. Please start NodeODM first.")
-        except requests.exceptions.Timeout as e:
-            logger.error(f"NodeODM request timeout: {str(e)}")
-            raise Exception("NodeODM request timed out. The server may be overloaded.")
-        except Exception as e:
-            logger.error(f"Error creating ODM task: {str(e)}")
-            raise e
-
-# Initialize the NodeODM client
-odm_client = NodeODMClient("http://localhost:3000")
+# OpenCV-based image processing (no external dependencies)
 
 # Models
 class ChatMessage(BaseModel):
@@ -110,7 +57,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
-    model: str = "Qwen/Qwen3-0.6B"
+    model: str = "Qwen/Qwen3-0.6B" # change to llama
 
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = Path("uploads")
@@ -119,7 +66,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # Initialize models and services on startup
 @app.on_event("startup")
 async def startup_event():
-    global plant_model, odm_service, db_service, chat_model, tokenizer
+    global plant_model, opencv_processor, db_service, chat_model, tokenizer
     try:
         # Initialize plant disease model
         plant_model = PlantDiseaseModel(
@@ -128,22 +75,9 @@ async def startup_event():
         )
         logger.info("Plant disease model loaded successfully")
 
-        # Initialize ODM service
-        # Check if NodeODM should be used (can be set via environment variable)
-        use_nodeodm = os.getenv("USE_NODEODM", "false").lower() == "true"
-        nodeodm_url = os.getenv("NODEODM_URL", "http://localhost:3000")
-        
-        if use_nodeodm:
-            logger.info(f"Initializing ODM service with NodeODM: {nodeodm_url}")
-            odm_service = ODMService(
-                use_nodeodm=True,
-                nodeodm_url=nodeodm_url
-            )
-        else:
-            logger.info("Initializing ODM service with local ODM CLI")
-            odm_service = ODMService(use_nodeodm=False)
-        
-        logger.info("ODM service initialized successfully")
+        # Initialize OpenCV image processor
+        opencv_processor = OpenCVImageProcessor(output_dir="opencv_outputs")
+        logger.info("OpenCV image processor initialized successfully")
 
         # Initialize database service
         db_service = DatabaseService()
@@ -186,7 +120,7 @@ async def load_chatbot_model():
         tokenizer = None
 
 def generate_response(prompt, max_new_tokens=800, temperature=0.8):
-    """Generate a clean, well-formatted chatbot response using the local model."""
+
     if not chat_model or not tokenizer:
         logger.warning("Model not loaded, using fallback response")
         return (
@@ -195,7 +129,7 @@ def generate_response(prompt, max_new_tokens=800, temperature=0.8):
         )
 
     try:
-        # === Construct a clean conversation prompt ===
+        # === Prompt Engineered input ===
         conversation = (
             "<|begin_of_text|>"
             "<|start_header_id|>system<|end_header_id|>\n"
@@ -428,7 +362,7 @@ async def upload_image(file: UploadFile = File(...)):
 @app.post("/api/process-drone-survey")
 async def process_drone_survey(files: List[UploadFile] = File(...), project_name: str = Form(...)):
     """
-    Process drone survey images using OpenDroneMap.
+    Process drone survey images using OpenCV for stitching and analysis.
     """
     try:
         logger.info(f"Received {len(files)} files for drone survey processing with project name: {project_name}")
@@ -457,49 +391,44 @@ async def process_drone_survey(files: List[UploadFile] = File(...), project_name
         
         logger.info(f"Successfully saved {len(saved_files)} files")
         
-        # Create ODM task with comprehensive options
-        options = {
-            'dsm': True,
-            'orthophoto': True,
-            'point-cloud': True,
-            'mesh': True,
-            'gltf': True,
-            'cog': True,
-            'pc-ept': True,
-            'quality': 'high',
-            'feature-type': 'orb'
-        }
-        
-        # Use ODM service if available, otherwise use NodeODM client
+        # Process images using OpenCV
         result = None
-        if odm_service:
+        if opencv_processor:
             try:
-                result = odm_service.process_drone_survey(temp_files, project_name, options)
+                result = opencv_processor.process_drone_survey(temp_files, project_name)
+                logger.info(f"OpenCV processing completed: {result}")
             except Exception as e:
-                logger.warning(f"ODM service failed, trying NodeODM client: {e}")
-                try:
-                    result = odm_client.create_task(temp_files, options)
-                except Exception as e2:
-                    logger.warning(f"NodeODM client also failed: {e2}")
-                    # Create a mock result for demo purposes
-                    result = {"uuid": f"mock_task_{uuid.uuid4()}", "status": "processing"}
+                logger.error(f"OpenCV processing failed: {e}")
+                # Create a fallback result
+                result = {
+                    "project_name": project_name,
+                    "stitched_image": None,
+                    "ndvi_map": None,
+                    "health_analysis": {"overall_health_score": 0.5},
+                    "processing_stats": {"status": "failed", "error": str(e)},
+                    "created_at": datetime.now().isoformat()
+                }
         else:
-            try:
-                result = odm_client.create_task(temp_files, options)
-            except Exception as e:
-                logger.warning(f"NodeODM client failed: {e}")
-                # Create a mock result for demo purposes
-                result = {"uuid": f"mock_task_{uuid.uuid4()}", "status": "processing"}
-        
-        logger.info(f"ODM task created: {result}")
+            logger.warning("OpenCV processor not available")
+            result = {
+                "project_name": project_name,
+                "stitched_image": None,
+                "ndvi_map": None,
+                "health_analysis": {"overall_health_score": 0.5},
+                "processing_stats": {"status": "failed", "error": "OpenCV processor not initialized"},
+                "created_at": datetime.now().isoformat()
+            }
         
         # Create survey record in database
         survey_data = {
             'id': f"survey_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             'survey_name': project_name,
             'survey_date': datetime.now().isoformat(),
-            'status': 'processing',
-            'notes': f"Processing {len(files)} images"
+            'status': 'completed' if result.get('stitched_image') else 'failed',
+            'orthomosaic_path': result.get('stitched_image'),
+            'ndvi_path': result.get('ndvi_map'),
+            'processing_time': result.get('processing_stats', {}).get('processing_time', 'N/A'),
+            'notes': f"Processed {len(files)} images using OpenCV"
         }
         
         if db_service:
@@ -508,9 +437,9 @@ async def process_drone_survey(files: List[UploadFile] = File(...), project_name
         
         return {
             "status": "success",
-            "message": f"Processing started for {len(files)} files",
+            "message": f"Processing completed for {len(files)} files",
             "files": saved_files,
-            "task_id": result.get('uuid') if isinstance(result, dict) else str(result),
+            "result": result,
             "survey": survey_data
         }
         

@@ -23,6 +23,7 @@ const DroneSurvey: React.FC<DroneSurveyProps> = ({ onBack }) => {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [surveyResults, setSurveyResults] = useState<SurveyResult[]>([]);
   const [projectName, setProjectName] = useState('');
+  const [viewingImage, setViewingImage] = useState<{type: 'orthomosaic' | 'ndvi', url: string, title: string} | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -43,6 +44,57 @@ const DroneSurvey: React.FC<DroneSurveyProps> = ({ onBack }) => {
     setSelectedFiles(null);
     setPreviewUrls([]);
     previewUrls.forEach(url => URL.revokeObjectURL(url));
+  };
+
+  const handleViewImage = (type: 'orthomosaic' | 'ndvi', survey: SurveyResult) => {
+    const imagePath = type === 'orthomosaic' ? survey.orthomosaic_path : survey.ndvi_path;
+    if (imagePath) {
+      // Convert backend path to frontend accessible URL
+      const imageUrl = `http://localhost:8000/${imagePath}`;
+      setViewingImage({
+        type,
+        url: imageUrl,
+        title: `${survey.survey_name} - ${type === 'orthomosaic' ? 'Orthomosaic' : 'NDVI Map'}`
+      });
+    }
+  };
+
+  const handleDownload = async (survey: SurveyResult) => {
+    try {
+      // Download both orthomosaic and NDVI if available
+      const downloads = [];
+      
+      if (survey.orthomosaic_path) {
+        downloads.push({
+          url: `http://localhost:8000/${survey.orthomosaic_path}`,
+          filename: `${survey.survey_name}_orthomosaic.jpg`
+        });
+      }
+      
+      if (survey.ndvi_path) {
+        downloads.push({
+          url: `http://localhost:8000/${survey.ndvi_path}`,
+          filename: `${survey.survey_name}_ndvi.jpg`
+        });
+      }
+
+      // Download each file
+      for (const download of downloads) {
+        const response = await fetch(download.url);
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = download.filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+    } catch (error) {
+      console.error('Download failed:', error);
+      setError('Download failed. Please try again.');
+    }
   };
 
   const processSurvey = async () => {
@@ -328,18 +380,27 @@ const DroneSurvey: React.FC<DroneSurveyProps> = ({ onBack }) => {
                     
                     <div className="flex space-x-2">
                       {survey.orthomosaic_path && (
-                        <button className="flex items-center px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition-colors">
+                        <button 
+                          onClick={() => handleViewImage('orthomosaic', survey)}
+                          className="flex items-center px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition-colors"
+                        >
                           <Eye className="h-3 w-3 mr-1" />
                           View Orthomosaic
                         </button>
                       )}
                       {survey.ndvi_path && (
-                        <button className="flex items-center px-3 py-1 text-xs bg-green-100 text-green-700 rounded-full hover:bg-green-200 transition-colors">
+                        <button 
+                          onClick={() => handleViewImage('ndvi', survey)}
+                          className="flex items-center px-3 py-1 text-xs bg-green-100 text-green-700 rounded-full hover:bg-green-200 transition-colors"
+                        >
                           <BarChart3 className="h-3 w-3 mr-1" />
                           View NDVI
                         </button>
                       )}
-                      <button className="flex items-center px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition-colors">
+                      <button 
+                        onClick={() => handleDownload(survey)}
+                        className="flex items-center px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition-colors"
+                      >
                         <Download className="h-3 w-3 mr-1" />
                         Download
                       </button>
@@ -355,6 +416,50 @@ const DroneSurvey: React.FC<DroneSurveyProps> = ({ onBack }) => {
           </div>
         </div>
       </div>
+
+      {/* Image Viewing Modal */}
+      {viewingImage && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg max-w-4xl max-h-[90vh] w-full mx-4">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="text-lg font-semibold">{viewingImage.title}</h3>
+              <button
+                onClick={() => setViewingImage(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="p-4">
+              <img
+                src={viewingImage.url}
+                alt={viewingImage.title}
+                className="max-w-full max-h-[70vh] object-contain mx-auto"
+                onError={(e) => {
+                  console.error('Image failed to load:', viewingImage.url);
+                  e.currentTarget.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDQwMCAzMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSI0MDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xNzUgMTI1SDIyNVYxNzVIMTc1VjEyNVoiIGZpbGw9IiM5Q0EzQUYiLz4KPHN2Zz4K';
+                }}
+              />
+            </div>
+            <div className="flex justify-end p-4 border-t">
+              <button
+                onClick={() => {
+                  const a = document.createElement('a');
+                  a.href = viewingImage.url;
+                  a.download = `${viewingImage.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.jpg`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                }}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

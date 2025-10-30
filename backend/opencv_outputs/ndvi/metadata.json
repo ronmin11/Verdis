@@ -1,0 +1,25 @@
+{
+  "project_name": "ndvi",
+  "stitched_image": "opencv_outputs\\ndvi\\stitched_panorama.jpg",
+  "ndvi_map": "opencv_outputs\\ndvi\\ndvi_map.jpg",
+  "health_analysis": {
+    "healthy_percentage": 0.0,
+    "stressed_percentage": 0.0,
+    "unhealthy_percentage": 0.0,
+    "overall_health_score": 0.0,
+    "health_visualization": "opencv_outputs\\ndvi\\health_analysis.jpg",
+    "total_area_analyzed": 183342400,
+    "analysis_timestamp": "2025-10-28T19:24:01.743497"
+  },
+  "processing_stats": {
+    "input_images": 5,
+    "stitched_dimensions": [
+      7400,
+      24776,
+      3
+    ],
+    "processing_time": "N/A",
+    "status": "completed"
+  },
+  "created_at": "2025-10-28T19:24:01.805369"
+}
