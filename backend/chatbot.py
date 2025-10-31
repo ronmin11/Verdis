@@ -1,57 +1,71 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
-from huggingface_hub import login
 import torch
-from threading import Thread
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import re
 
-# Login to Hugging Face
-login(token="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")
+def load_chat_model(model_name="meta-llama/Llama-3.2-1B-Instruct"):
 
-# Load model and tokenizer
-model_name = "meta-llama/Meta-Llama-3.1-8B-Instruct"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    torch_dtype=torch.float16,
-    device_map="auto"
-)
+    global model, tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.pad_token = tokenizer.eos_token
 
-def generate_streaming_response(prompt, max_new_tokens=500, temperature=0.7):
-
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    
-    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
-    
-
-    generation_kwargs = dict(
-        **inputs,
-        streamer=streamer,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        do_sample=True,
-        top_p=0.9,
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.float16,
+        device_map="auto"
     )
-    
-    thread = Thread(target=model.generate, kwargs=generation_kwargs)
-    thread.start()
-    
-    # Stream the response
-    for new_text in streamer:
-        yield new_text
 
-# Example usage
+
+def generate_response(prompt, max_new_tokens=800, temperature=0.8):
+    if not model or not tokenizer:
+        return (
+            "I'm an agricultural assistant. I can help with plant disease questions. "
+            "What would you like to know about crop health?"
+        )
+
+    conversation = (
+        "<|begin_of_text|>"
+        "<|start_header_id|>system<|end_header_id|>\n"
+        "You are a helpful agricultural assistant. Provide clear, practical advice "
+        "about plant diseases and crop health.<|eot_id|>\n"
+        "<|start_header_id|>user<|end_header_id|>\n"
+        f"{prompt.strip()}<|eot_id|>\n"
+        "<|start_header_id|>assistant<|end_header_id|>\n"
+    )
+
+    inputs = tokenizer.encode(conversation, return_tensors="pt").to(
+        next(model.parameters()).device
+    )
+
+    with torch.no_grad():
+        outputs = model.generate(
+            inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            do_sample=True,
+            top_p=0.9,
+            top_k=50,
+            repetition_penalty=1.1,
+            no_repeat_ngram_size=3,
+            pad_token_id=tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            early_stopping=True,
+        )
+
+    decoded = tokenizer.decode(outputs[0], skip_special_tokens=False)
+
+    if "<|start_header_id|>assistant<|end_header_id|>" in decoded:
+        response = decoded.split("<|start_header_id|>assistant<|end_header_id|>")[-1]
+    else:
+        response = decoded
+
+    if "<|eot_id|>" in response:
+        response = response.split("<|eot_id|>")[0]
+
+    return re.sub(r"<\|.*?\|>", "", response).strip()
+
+
+# Example use
 if __name__ == "__main__":
-    disease = "Early blight (tomato)"
-    weather = "28°C, humidity 84%, light rainfall"
-    
-    prompt = f"""
-    You are a crop health assistant.
-    Predicted disease: {disease}
-    Weather: {weather}
-    Give a description of the disease, explain likely causes, and recommend safe and effective treatment steps.
-    """
-    
-    # Stream the response
-    print("Assistant: ", end="", flush=True)
-    for chunk in generate_streaming_response(prompt):
-        print(chunk, end="", flush=True)
-    print()
+    load_chat_model()
+    question = "How can I prevent fungal diseases in tomato plants?"
+    print(generate_response(question))
