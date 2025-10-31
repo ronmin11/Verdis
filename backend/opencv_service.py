@@ -9,10 +9,8 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-class OpenCVImageProcessor:
-    """OpenCV-based image processing for drone surveys and crop analysis."""
-    
-    def __init__(self, output_dir: str = "opencv_outputs"):
+class OpenCVImageProcessor:  
+    def __init__(self, output_dir):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
@@ -21,17 +19,7 @@ class OpenCVImageProcessor:
         self.matcher = cv2.BFMatcher()
         
     def stitch_images(self, image_paths: List[str], project_name: str) -> Dict[str, Any]:
-        """
-        Stitch multiple drone images into a panoramic view with professional post-processing.
-        
-        Args:
-            image_paths: List of paths to input images
-            project_name: Name for the project/output folder
-            
-        Returns:
-            Dictionary with processing results and file paths
-        """
-        # Create project output directory
+
         project_dir = self.output_dir / project_name
         project_dir.mkdir(exist_ok=True)
         
@@ -86,16 +74,7 @@ class OpenCVImageProcessor:
         return result
     
     def generate_ndvi_map(self, image: np.ndarray, output_dir: Path) -> str:
-        """
-        Generate NDVI (Normalized Difference Vegetation Index) map from RGB image.
-        
-        Args:
-            image: Input RGB image
-            output_dir: Directory to save NDVI map
-            
-        Returns:
-            Path to saved NDVI map
-        """
+
         # Convert BGR to RGB
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
@@ -142,16 +121,6 @@ class OpenCVImageProcessor:
         return str(ndvi_path)
     
     def analyze_crop_health(self, image: np.ndarray, output_dir: Path) -> Dict[str, Any]:
-        """
-        Analyze crop health from stitched image using color analysis.
-        
-        Args:
-            image: Input stitched image
-            output_dir: Directory to save analysis results
-            
-        Returns:
-            Dictionary with health analysis results
-        """
         # Convert to HSV for color analysis
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
@@ -202,16 +171,6 @@ class OpenCVImageProcessor:
         }
     
     def detect_field_boundaries(self, image: np.ndarray, output_dir: Path) -> Dict[str, Any]:
-        """
-        Detect field boundaries and crop rows using edge detection.
-        
-        Args:
-            image: Input stitched image
-            output_dir: Directory to save boundary detection results
-            
-        Returns:
-            Dictionary with boundary detection results
-        """
         # Convert to grayscale
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
@@ -248,25 +207,13 @@ class OpenCVImageProcessor:
         }
     
     def process_drone_survey(self, image_paths: List[str], project_name: str) -> Dict[str, Any]:
-        """
-        Complete drone survey processing pipeline.
-        
-        Args:
-            image_paths: List of paths to drone images
-            project_name: Name for the project
-            
-        Returns:
-            Complete processing results
-        """
-        # Step 1: Stitch images
+
         stitching_result = self.stitch_images(image_paths, project_name)
-        
-        # Step 2: Load stitched image for further processing
+    
         stitched_img = cv2.imread(stitching_result["stitched_image"])
         if stitched_img is None:
             raise ValueError("Failed to load stitched image")
         
-        # Step 3: Detect field boundaries
         boundary_result = self.detect_field_boundaries(stitched_img, Path(stitching_result["stitched_image"]).parent)
         
         # Combine all results

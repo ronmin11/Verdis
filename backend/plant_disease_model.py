@@ -4,19 +4,20 @@ from torchvision import transforms
 from PIL import Image
 import os
 import logging
+from transformers import AutoModel
+from collections import OrderedDict
 
-# Model architecture that matches your training code
+# Model architecture that training code from colab
 class ImageClassifier(nn.Module):
     def __init__(self, num_classes=38, dropout_rate=0.3):
         super(ImageClassifier, self).__init__()
         
         # Use the same model as in your training code
-        from transformers import AutoModel
+        
         self.base_model = AutoModel.from_pretrained("microsoft/resnet-18")
         
-        # Add additional MLP layers to extract more features (same as your code)
         self.classifier = nn.Sequential(
-            nn.Linear(512, 256),  # Use the determined input size
+            nn.Linear(512, 256),  
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(256, 128),
@@ -28,20 +29,12 @@ class ImageClassifier(nn.Module):
     def forward(self, x):
         outputs = self.base_model(pixel_values=x, return_dict=True)
         features = outputs.pooler_output
-        # Flatten the features from (batch_size, 512, 1, 1) to (batch_size, 512)
         features = features.view(features.size(0), -1)
         logits = self.classifier(features)
         return logits
 
 class PlantDiseaseModel:
     def __init__(self, model_weights_path, class_names_path=None):
-        """
-        Initialize the plant disease classification model.
-        
-        Args:
-            model_weights_path (str): Path to the .pth model weights file
-            class_names_path (str, optional): Path to file containing class names
-        """
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = self._load_model(model_weights_path)
         self.transform = self._get_transforms()
@@ -70,7 +63,6 @@ class PlantDiseaseModel:
                 
                 # If the model was saved with DataParallel, remove 'module.' prefix
                 if all(key.startswith('module.') for key in model.keys()):
-                    from collections import OrderedDict
                     new_state_dict = OrderedDict()
                     for k, v in model.items():
                         name = k[7:]  # remove 'module.' prefix
@@ -118,14 +110,9 @@ class PlantDiseaseModel:
         ])
 
     def predict(self, image_path):
-        try:
-            # Load and preprocess image
-            if not os.path.exists(image_path):
-                raise FileNotFoundError(f"Image not found: {image_path}")
-                
+        try:    
             img = Image.open(image_path).convert('RGB')
             img_tensor = self.transform(img)
-            # Type assertion to help the type checker understand this is a tensor
             img_tensor = img_tensor.unsqueeze(0).to(self.device)  # type: ignore
             
             # Make prediction

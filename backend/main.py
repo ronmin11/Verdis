@@ -13,23 +13,27 @@ import uuid
 from datetime import datetime
 import sys
 import logging
-
-# Add the current directory to the path so we can import chatbot
-sys.path.append(str(Path(__file__).parent))
 from plant_disease_model import PlantDiseaseModel
 from opencv_service import OpenCVImageProcessor
 from database import DatabaseService
+from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import requests
+import asyncio
+import re
+
+
+# Add the current directory to the path so we can import chatbot
+sys.path.append(str(Path(__file__).parent))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+
 app = FastAPI(title="Verdis API")
 
-# Configure CORS
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # In production, replace with your frontend URL
@@ -84,7 +88,6 @@ async def startup_event():
         logger.info("Database service initialized successfully")
 
         # Initialize chatbot model in background (non-blocking)
-        import asyncio
         asyncio.create_task(load_chatbot_model())
 
     except Exception as e:
@@ -92,29 +95,22 @@ async def startup_event():
         raise
 
 async def load_chatbot_model():
-    """Load chatbot model in background without blocking startup."""
     global chat_model, tokenizer
     try:
-        from transformers import AutoTokenizer, AutoModelForCausalLM
         model_name = "meta-llama/Llama-3.2-1B-Instruct"
-        logger.info(f"Loading Llama model in background: {model_name}")
         
         # Load tokenizer first (faster)
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.pad_token = tokenizer.eos_token
-        logger.info("Tokenizer loaded successfully")
         
         # Load model
-        logger.info("Loading Llama model (this may take a moment)...")
         chat_model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16,  # Use half precision for faster loading
             device_map="auto"  # Auto device mapping
         )
-        logger.info("Llama model loaded successfully")
     except Exception as e:
         logger.warning(f"Failed to load Llama model: {e}")
-        logger.info("Chat will use fallback responses")
         # Set to None to ensure fallback works
         chat_model = None
         tokenizer = None
@@ -140,8 +136,6 @@ def generate_response(prompt, max_new_tokens=800, temperature=0.8):
             f"{prompt.strip()}<|eot_id|>\n"
             "<|start_header_id|>assistant<|end_header_id|>\n"
         )
-
-        logger.info(f"Generating response for: {prompt[:60]}...")
 
         # === Encode input and move to correct device ===
         inputs = tokenizer.encode(conversation, return_tensors="pt")
@@ -178,21 +172,8 @@ def generate_response(prompt, max_new_tokens=800, temperature=0.8):
             response = response.split("<|eot_id|>")[0]
 
         # Remove leftover tokens or metadata
-        import re
         response = re.sub(r"<\|.*?\|>", "", response).strip()
 
-        # === Final fallback if response is too short ===
-        if not response or len(response) < 10:
-            response = (
-                f"Based on your question about '{prompt}', here are some general agricultural recommendations:\n\n"
-                "• Monitor your crops regularly for signs of disease\n"
-                "• Check for discoloration, spots, or unusual growth patterns\n"
-                "• Consider environmental factors like humidity and temperature\n"
-                "• Consult with local agricultural experts for specific treatment options\n"
-                "• Practice good crop rotation and field sanitation"
-            )
-
-        logger.info(f"Final cleaned response: {response}")
         return response
 
     except Exception as e:
@@ -208,11 +189,6 @@ def generate_response(prompt, max_new_tokens=800, temperature=0.8):
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "timestamp": datetime.utcnow()}
-
-# Simple test endpoint for debugging
-@app.get("/api/test")
-async def test_endpoint():
-    return {"message": "Backend is working!", "timestamp": datetime.utcnow()}
 
 @app.post("/api/chat/stream")
 async def chat_stream(chat_request: ChatRequest):
@@ -235,7 +211,6 @@ async def chat_stream(chat_request: ChatRequest):
                 yield "data: Sorry, an error occurred while generating a response.\n\n"
                 yield "data: [DONE]\n\n"
 
-        # ✅ Correct SSE headers and media type
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
@@ -365,13 +340,10 @@ async def process_drone_survey(files: List[UploadFile] = File(...), project_name
     Process drone survey images using OpenCV for stitching and analysis.
     """
     try:
-        logger.info(f"Received {len(files)} files for drone survey processing with project name: {project_name}")
-        
         # Save files temporarily
         temp_files = []
         saved_files = []
         for file in files:
-            logger.info(f"Processing file: {file.filename}, size: {file.size}")
             filename_attr = file.filename
             if not filename_attr:
                 continue
@@ -389,14 +361,11 @@ async def process_drone_survey(files: List[UploadFile] = File(...), project_name
                 "size": file.size
             })
         
-        logger.info(f"Successfully saved {len(saved_files)} files")
-        
         # Process images using OpenCV
         result = None
         if opencv_processor:
             try:
                 result = opencv_processor.process_drone_survey(temp_files, project_name)
-                logger.info(f"OpenCV processing completed: {result}")
             except Exception as e:
                 logger.error(f"OpenCV processing failed: {e}")
                 # Create a fallback result
@@ -409,7 +378,6 @@ async def process_drone_survey(files: List[UploadFile] = File(...), project_name
                     "created_at": datetime.now().isoformat()
                 }
         else:
-            logger.warning("OpenCV processor not available")
             result = {
                 "project_name": project_name,
                 "stitched_image": None,
